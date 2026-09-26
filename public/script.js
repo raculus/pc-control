@@ -210,18 +210,32 @@ async function deletePc() {
   loadPcs();
 }
 
-// LAN 스캔 모달 처리
 async function openAddPcModal() {
-  const res = await fetch('/api/lan/devices');
-  const devices = await res.json();
+  // 1. 모달 창부터 즉시 띄우기
+  document.getElementById('add-modal').style.display = 'flex';
   
   const select = document.getElementById('lan-devices');
-  select.innerHTML = '<option value="">-- ARP 탐색 장치 선택 --</option>';
-  devices.forEach(dev => {
-    select.innerHTML += `<option value="${dev.ip}|${dev.mac}">IP: ${dev.ip} (MAC: ${dev.mac})</option>`;
-  });
+  select.innerHTML = '<option value="">🔍 주변 장치 스캔 중...</option>';
 
-  document.getElementById('add-modal').style.display = 'flex';
+  try {
+    // URL 뒤에 v=타임스탬프를 붙여 브라우저 304 캐시 완벽 방지
+    const res = await fetch(`/api/lan/devices?v=${Date.now()}`);
+    if (!res.ok) throw new Error('ARP 탐색 실패');
+    
+    const devices = await res.json();
+    
+    if (Array.isArray(devices) && devices.length > 0) {
+      select.innerHTML = '<option value="">-- ARP 탐색 장치 선택 --</option>';
+      devices.forEach(dev => {
+        select.innerHTML += `<option value="${dev.ip}|${dev.mac}">IP: ${dev.ip} (MAC: ${dev.mac})</option>`;
+      });
+    } else {
+      select.innerHTML = '<option value="">-- 탐색된 장치 없음 (수동 입력 가능) --</option>';
+    }
+  } catch (err) {
+    console.error('[LAN Scan Error]', err);
+    select.innerHTML = '<option value="">-- 스캔 실패 (수동 입력 가능) --</option>';
+  }
 }
 
 function selectLanDevice() {
@@ -257,4 +271,43 @@ async function saveNewPc() {
 
 function closeModal(id) {
   document.getElementById(id).style.display = 'none';
+}
+
+// 비밀번호 변경 모달 열기
+function openChangePasswordModal() {
+  document.getElementById('change-current-pw').value = '';
+  document.getElementById('change-new-pw').value = '';
+  document.getElementById('change-new-pw-confirm').value = '';
+  document.getElementById('change-pw-modal').style.display = 'flex';
+}
+
+// 비밀번호 변경 API 호출
+async function changePassword() {
+  const currentPassword = document.getElementById('change-current-pw').value;
+  const newPassword = document.getElementById('change-new-pw').value;
+  const newPasswordConfirm = document.getElementById('change-new-pw-confirm').value;
+
+  if (!currentPassword || !newPassword) {
+    return alert('현재 비밀번호와 새 비밀번호를 모두 입력하세요.');
+  }
+
+  if (newPassword !== newPasswordConfirm) {
+    return alert('새 비밀번호와 비밀번호 확인이 일치하지 않습니다.');
+  }
+
+  const res = await fetch('/api/admin/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword })
+  });
+
+  const data = await res.json();
+
+  if (res.ok) {
+    alert('비밀번호가 성공적으로 변경되었습니다. 다시 로그인해 주세요.');
+    closeModal('change-pw-modal');
+    logout(); // 변경 후 자동 로그아웃 처리
+  } else {
+    alert(data.message || '비밀번호 변경 실패');
+  }
 }

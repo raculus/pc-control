@@ -11,6 +11,7 @@
     <h2>PC 사용시간 관리</h2>
     <div id="header-actions" style="display:none;">
       <button onclick="openAddPcModal()">+ PC 추가</button>
+      <button class="btn-secondary" onclick="openChangePasswordModal()">비밀번호 변경</button>
       <button class="btn-secondary" onclick="logout()">로그아웃</button>
     </div>
   </header>
@@ -119,6 +120,26 @@
       <div style="text-align: right; margin-top: 15px;">
         <button onclick="saveNewPc()">등록하기</button>
         <button class="btn-secondary" onclick="closeModal('add-modal')">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- [모달] 관리자 비밀번호 변경 -->
+  <div id="change-pw-modal" class="modal">
+    <div class="modal-content">
+      <h3>관리자 비밀번호 변경</h3>
+      <label>현재 비밀번호</label>
+      <input type="password" id="change-current-pw" placeholder="현재 비밀번호 입력">
+      
+      <label>새 비밀번호</label>
+      <input type="password" id="change-new-pw" placeholder="새 비밀번호 입력">
+
+      <label>새 비밀번호 확인</label>
+      <input type="password" id="change-new-pw-confirm" placeholder="새 비밀번호 다시 입력">
+
+      <div style="text-align: right; margin-top: 15px;">
+        <button onclick="changePassword()">변경하기</button>
+        <button class="btn-secondary" onclick="closeModal('change-pw-modal')">취소</button>
       </div>
     </div>
   </div>

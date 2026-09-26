@@ -1,42 +1,45 @@
-const Database = require('better-sqlite3');
-const db = new Database('./pc_control.db');
+const fs = require('fs');
+const path = require('path');
 
-// WAL 모드 활성화 (성능 및 동시성 향상)
-db.pragma('journal_mode = WAL');
+const DB_PATH = path.join(__dirname, 'data', 'db.json');
 
-// 테이블 생성
-db.exec(`
-  CREATE TABLE IF NOT EXISTS admin_config (
-    id INTEGER PRIMARY KEY DEFAULT 1,
-    admin_password TEXT NOT NULL
-  );
+// 초기 데이터 구조 정의
+const defaultData = {
+  admin_config: {
+    admin_password: 'admin1234'
+  },
+  pcs: []
+};
 
-  CREATE TABLE IF NOT EXISTS pcs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    ip TEXT NOT NULL,
-    mac TEXT NOT NULL UNIQUE,
-    ssh_user TEXT DEFAULT 'administrator',
-    ssh_password TEXT,
-    remaining_seconds INTEGER DEFAULT 0,
-    is_online INTEGER DEFAULT 0,
-    last_seen DATETIME,
-    last_booted_at DATETIME
-  );
-
-  CREATE TABLE IF NOT EXISTS pc_schedules (
-    pc_id INTEGER,
-    day_of_week INTEGER,
-    default_minutes INTEGER DEFAULT 60,
-    PRIMARY KEY (pc_id, day_of_week),
-    FOREIGN KEY (pc_id) REFERENCES pcs(id) ON DELETE CASCADE
-  );
-`);
-
-// 초기 관리자 비밀번호 확인 및 생성
-const adminRow = db.prepare("SELECT count(*) as count FROM admin_config").get();
-if (adminRow.count === 0) {
-  db.prepare("INSERT INTO admin_config (id, admin_password) VALUES (1, 'admin1234')").run();
+// data 폴더 존재 확인 및 생성
+const dir = path.dirname(DB_PATH);
+if (!fs.existsSync(dir)) {
+  fs.mkdirSync(dir, { recursive: true });
 }
 
-module.exports = db;
+// DB 파일 없으면 생성
+if (!fs.existsSync(DB_PATH)) {
+  fs.writeFileSync(DB_PATH, JSON.stringify(defaultData, null, 2), 'utf-8');
+}
+
+const dbManager = {
+  read() {
+    try {
+      const content = fs.readFileSync(DB_PATH, 'utf-8');
+      return JSON.parse(content);
+    } catch (err) {
+      console.error('[DB Read Error]', err);
+      return defaultData;
+    }
+  },
+
+  write(data) {
+    try {
+      fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (err) {
+      console.error('[DB Write Error]', err);
+    }
+  }
+};
+
+module.exports = dbManager;

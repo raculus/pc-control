@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   pc-control:
-    image: raculus/pc-control:latest
+    build: .
     container_name: pc-control
     restart: always
     network_mode: host
     environment:
-      - PORT=3003  # 원하는 포트로 자유롭게 변경 가능 (기본값: 3000)
+      - PORT=3003
     volumes:
-      - ./pc_control.db:/app/pc_control.db
+      - /DATA/AppData/pc-controller/data:/app/data

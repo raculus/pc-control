@@ -1,6 +1,7 @@
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
+const fs = require('fs'); // <--- fs 모듈 정의
 const { exec } = require('child_process');
 const { Client } = require('ssh2');
 const db = require('./database');
@@ -19,13 +20,22 @@ const checkAuth = (req, res, next) => {
   else res.status(401).json({ error: '인증 필요' });
 };
 
-// MAC 주소 기반 남은 시간 조회 (공백 및 대소문자 무시 조건 적용)
+// 한국 시간(KST) ISO 규격 문자열 생성 헬퍼
+function getKSTISOString() {
+  const now = new Date();
+  const kst = new Date(now.getTime() + (9 * 60 * 60 * 1000));
+  return kst.toISOString().replace('Z', '');
+}
+
+// MAC 주소 기반 남은 시간 조회
 app.get('/api/client/status-by-mac', (req, res) => {
   const mac = req.query.mac;
   if (!mac) return res.status(400).json({ error: 'MAC 주소가 필요합니다.' });
 
   try {
-    const pc = db.prepare("SELECT id, name, remaining_seconds, is_online, last_booted_at FROM pcs WHERE LOWER(TRIM(mac)) = LOWER(TRIM(?))").get(mac);
+    const data = db.read();
+    const cleanMac = mac.trim().toLowerCase();
+    const pc = data.pcs.find(p => p.mac.trim().toLowerCase() === cleanMac);
 
     if (!pc) {
       return res.status(404).json({ error: '등록되지 않은 PC입니다.' });
@@ -49,17 +59,13 @@ app.get('/api/client/status-by-mac', (req, res) => {
   }
 });
 
-// SSH 명령으로 PC 원격 종료 수행 함수
+// SSH 원격 종료 함수
 function shutdownPCviaSSH(ip, user, password) {
   const conn = new Client();
   conn.on('ready', () => {
-    // Windows 및 Linux 호환 강제 종료 명령 실행
     conn.exec('shutdown /s /t 60 /f || shutdown -h now', (err, stream) => {
-      if (stream) {
-        stream.on('close', () => conn.end());
-      } else {
-        conn.end();
-      }
+      if (stream) stream.on('close', () => conn.end());
+      else conn.end();
     });
   }).on('error', (err) => {
     console.error(`[SSH Error] ${ip}:`, err.message);
@@ -72,9 +78,7 @@ function shutdownPCviaSSH(ip, user, password) {
   });
 }
 
-// -------------------------------------------------------------
-// 백그라운드 주기 타이머: 30초마다 MAC/IP 추적 -> Ping 체크, 상태 전환 감지 및 시간 차감
-// -------------------------------------------------------------
+// 백그라운드 30초 감시 및 시간 차감 타이머
 setInterval(() => {
   exec('arp -a', (err, stdout) => {
     if (err) return;
@@ -93,14 +97,14 @@ setInterval(() => {
     });
 
     try {
-      const pcs = db.prepare("SELECT * FROM pcs").all();
+      const store = db.read();
 
-      pcs.forEach((pc) => {
+      store.pcs.forEach((pc) => {
         const targetMac = pc.mac.toLowerCase();
         const currentIp = arpMap.get(targetMac) || pc.ip;
 
         if (arpMap.has(targetMac) && currentIp !== pc.ip) {
-          db.prepare("UPDATE pcs SET ip = ? WHERE id = ?").run(currentIp, pc.id);
+          pc.ip = currentIp;
         }
 
         const pingCmd = process.platform === 'win32' 
@@ -109,48 +113,48 @@ setInterval(() => {
 
         exec(pingCmd, (error) => {
           const isOnline = !error ? 1 : 0;
+          const kstNow = getKSTISOString();
 
           if (isOnline) {
             let newTime = Math.max(0, pc.remaining_seconds - 30);
             
             if (pc.is_online === 0) {
               console.log(`[부팅 감지] ${pc.name}(${currentIp}) PC 최초 켜짐 시점 기록`);
-              db.prepare(
-                "UPDATE pcs SET is_online = 1, ip = ?, remaining_seconds = ?, last_seen = datetime('now', '+9 hours'), last_booted_at = datetime('now', '+9 hours') WHERE id = ?"
-              ).run(currentIp, newTime, pc.id);
+              pc.is_online = 1;
+              pc.ip = currentIp;
+              pc.remaining_seconds = newTime;
+              pc.last_seen = kstNow;
+              pc.last_booted_at = kstNow;
             } else {
-              db.prepare(
-                "UPDATE pcs SET is_online = 1, ip = ?, remaining_seconds = ?, last_seen = datetime('now', '+9 hours') WHERE id = ?"
-              ).run(currentIp, newTime, pc.id);
+              pc.is_online = 1;
+              pc.ip = currentIp;
+              pc.remaining_seconds = newTime;
+              pc.last_seen = kstNow;
             }
 
-            // 시간 소진 시 원격 종료
             if (newTime === 0 && pc.remaining_seconds > 0) {
               console.log(`[시간 소진] ${pc.name}(${currentIp}) 원격 종료 요청`);
               shutdownPCviaSSH(currentIp, pc.ssh_user, pc.ssh_password);
             }
           } else {
-            // Ping 실패 시 오프라인 상태로 변경
-            db.prepare("UPDATE pcs SET is_online = 0 WHERE id = ?").run(pc.id);
+            pc.is_online = 0;
           }
+
+          db.write(store);
         });
       });
     } catch (dbErr) {
-      console.error("[Timer Error] DB 조회/수정 에러:", dbErr.message);
+      console.error("[Timer Error] DB 작업 에러:", dbErr.message);
     }
   });
 }, 30000);
 
-// ==========================================
 // API 엔드포인트
-// ==========================================
-
-// 로그인 / 로그인 상태 확인 / 비밀번호 변경
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
-  const row = db.prepare("SELECT admin_password FROM admin_config WHERE id = 1").get();
+  const store = db.read();
 
-  if (row && row.admin_password === password) {
+  if (store.admin_config && store.admin_config.admin_password === password) {
     req.session.authenticated = true;
     res.json({ success: true });
   } else {
@@ -160,140 +164,184 @@ app.post('/api/admin/login', (req, res) => {
 
 app.post('/api/admin/change-password', checkAuth, (req, res) => {
   const { currentPassword, newPassword } = req.body;
-  const row = db.prepare("SELECT admin_password FROM admin_config WHERE id = 1").get();
+  const store = db.read();
 
-  if (row && row.admin_password === currentPassword) {
-    db.prepare("UPDATE admin_config SET admin_password = ? WHERE id = 1").run(newPassword);
+  if (store.admin_config && store.admin_config.admin_password === currentPassword) {
+    store.admin_config.admin_password = newPassword;
+    db.write(store);
     res.json({ success: true });
   } else {
     res.status(400).json({ message: '현재 비밀번호 불일치' });
   }
 });
 
-// 1. LAN ARP 탐색 목록 가져오기
+// LAN ARP 탐색 목록 가져오기 (fs 활용)
 app.get('/api/lan/devices', checkAuth, (req, res) => {
-  exec('arp -a', (err, stdout) => {
-    if (err) return res.status(500).json({ error: 'ARP 탐색 실패' });
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
 
+  if (fs.existsSync('/proc/net/arp')) {
+    try {
+      const content = fs.readFileSync('/proc/net/arp', 'utf-8');
+      const lines = content.split('\n').slice(1);
+      const devices = [];
+
+      lines.forEach(line => {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 4) {
+          const ip = parts[0];
+          const flags = parts[2];
+          const mac = parts[3];
+
+          if (flags !== '0x0' && mac && mac !== '00:00:00:00:00:00') {
+            const formattedMac = mac.split(':').map(hex => hex.padStart(2, '0')).join(':').toLowerCase();
+            if (!devices.some(d => d.mac === formattedMac) && !ip.startsWith('127.')) {
+              devices.push({ ip, mac: formattedMac });
+            }
+          }
+        }
+      });
+
+      return res.json(devices);
+    } catch (e) {
+      console.error('[ARP Read Error]', e);
+    }
+  }
+
+  exec('arp -a', (err, stdout) => {
+    if (err) return res.json([]);
     const devices = [];
-    const lines = stdout.split('\n');
     const ipMacRegex = /((?:\d{1,3}\.){3}\d{1,3})\s+([0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2})/i;
 
-    lines.forEach(line => {
+    stdout.split('\n').forEach(line => {
       const match = line.match(ipMacRegex);
       if (match) {
-        devices.push({
-          ip: match[1],
-          mac: match[2].replace(/-/g, ':').toLowerCase()
-        });
+        const ip = match[1];
+        const mac = match[2].replace(/-/g, ':').toLowerCase();
+        if (!devices.some(d => d.mac === mac)) {
+          devices.push({ ip, mac });
+        }
       }
     });
-
     res.json(devices);
   });
 });
 
-// 2. PC 목록 조회
 app.get('/api/pcs', checkAuth, (req, res) => {
-  const rows = db.prepare("SELECT id, name, ip, mac, ssh_user, remaining_seconds, is_online, last_booted_at FROM pcs").all();
+  const store = db.read();
+  const rows = store.pcs.map(pc => ({
+    id: pc.id,
+    name: pc.name,
+    ip: pc.ip,
+    mac: pc.mac,
+    ssh_user: pc.ssh_user,
+    remaining_seconds: pc.remaining_seconds,
+    is_online: pc.is_online,
+    last_booted_at: pc.last_booted_at
+  }));
   res.json(rows || []);
 });
-// 3. PC 신규 등록 API (트랜잭션 적용 및 24시간 제한)
+
 app.post('/api/pcs', checkAuth, (req, res) => {
   const { name, ip, mac, ssh_user, ssh_password } = req.body;
-  
   const cleanMac = mac ? mac.trim().toLowerCase() : '';
   const cleanIp = ip ? ip.trim() : '';
 
   try {
-    const insertPc = db.prepare("INSERT INTO pcs (name, ip, mac, ssh_user, ssh_password) VALUES (?, ?, ?, ?, ?)");
-    const insertSchedule = db.prepare("INSERT INTO pc_schedules (pc_id, day_of_week, default_minutes) VALUES (?, ?, 60)");
+    const store = db.read();
+    if (store.pcs.some(p => p.mac.toLowerCase() === cleanMac)) {
+      return res.status(400).json({ error: '이미 등록된 MAC 주소입니다.' });
+    }
 
-    const createPcWithSchedules = db.transaction((pcData) => {
-      const info = insertPc.run(pcData.name, pcData.ip, pcData.mac, pcData.user, pcData.pass);
-      const pcId = info.lastInsertRowid;
-      for (let i = 0; i < 7; i++) {
-        insertSchedule.run(pcId, i);
-      }
-      return pcId;
-    });
+    const newId = store.pcs.length > 0 ? Math.max(...store.pcs.map(p => p.id)) + 1 : 1;
+    const defaultSchedules = [];
+    for (let i = 0; i < 7; i++) {
+      defaultSchedules.push({ day_of_week: i, default_minutes: 60 });
+    }
 
-    const pcId = createPcWithSchedules({
+    const newPc = {
+      id: newId,
       name: name.trim(),
       ip: cleanIp,
       mac: cleanMac,
-      user: ssh_user || 'administrator',
-      pass: ssh_password || ''
-    });
+      ssh_user: ssh_user || 'administrator',
+      ssh_password: ssh_password || '',
+      remaining_seconds: 0,
+      is_online: 0,
+      last_seen: null,
+      last_booted_at: null,
+      schedules: defaultSchedules
+    };
 
-    res.json({ success: true, pcId });
+    store.pcs.push(newPc);
+    db.write(store);
+
+    res.json({ success: true, pcId: newId });
   } catch (err) {
-    res.status(400).json({ error: '이미 등록되었거나 잘못된 정보입니다.' });
+    res.status(400).json({ error: 'PC 등록 실패' });
   }
 });
 
-// 6. PC 요일별/일괄 시간 수정 (최대 24시간 = 1440분 제한 적용)
-app.post('/api/pcs/:id/update-schedule', checkAuth, (req, res) => {
-  const pcId = req.params.id;
-  let { day_of_week, default_minutes } = req.body;
+app.get('/api/pcs/:id', checkAuth, (req, res) => {
+  const pcId = parseInt(req.params.id);
+  const store = db.read();
+  const pc = store.pcs.find(p => p.id === pcId);
 
-  // 24시간(1440분) 초과 시 1440분으로 고정, 음수일 경우 0분 고정
+  if (!pc) return res.status(404).json({ error: 'PC를 찾을 수 없습니다.' });
+
+  const { schedules, ...pcData } = pc;
+  res.json({ pc: pcData, schedules: schedules || [] });
+});
+
+app.post('/api/pcs/:id/adjust-time', checkAuth, (req, res) => {
+  const pcId = parseInt(req.params.id);
+  const { minutes } = req.body;
+  const addSeconds = minutes * 60;
+
+  const store = db.read();
+  const pc = store.pcs.find(p => p.id === pcId);
+  if (pc) {
+    pc.remaining_seconds = Math.max(0, pc.remaining_seconds + addSeconds);
+    db.write(store);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/pcs/:id/update-schedule', checkAuth, (req, res) => {
+  const pcId = parseInt(req.params.id);
+  let { day_of_week, default_minutes } = req.body;
   const cappedMinutes = Math.min(1440, Math.max(0, parseInt(default_minutes) || 0));
 
-  if (day_of_week === 'bulk') {
-    db.prepare("UPDATE pc_schedules SET default_minutes = ? WHERE pc_id = ?").run(cappedMinutes, pcId);
-  } else {
-    db.prepare("UPDATE pc_schedules SET default_minutes = ? WHERE pc_id = ? AND day_of_week = ?").run(cappedMinutes, pcId, day_of_week);
+  const store = db.read();
+  const pc = store.pcs.find(p => p.id === pcId);
+
+  if (pc) {
+    if (day_of_week === 'bulk') {
+      pc.schedules.forEach(s => s.default_minutes = cappedMinutes);
+    } else {
+      const targetDay = parseInt(day_of_week);
+      const schedule = pc.schedules.find(s => s.day_of_week === targetDay);
+      if (schedule) schedule.default_minutes = cappedMinutes;
+    }
+    db.write(store);
   }
   res.json({ success: true, default_minutes: cappedMinutes });
 });
 
-// 4. 특정 PC 상세 정보 (개별 설정 및 요일 시간)
-app.get('/api/pcs/:id', checkAuth, (req, res) => {
-  const pcId = req.params.id;
-  const pc = db.prepare("SELECT id, name, ip, mac, ssh_user, remaining_seconds, is_online, last_booted_at FROM pcs WHERE id = ?").get(pcId);
-  if (!pc) return res.status(404).json({ error: 'PC를 찾을 수 없습니다.' });
-
-  const schedules = db.prepare("SELECT day_of_week, default_minutes FROM pc_schedules WHERE pc_id = ? ORDER BY day_of_week ASC").all(pcId);
-  res.json({ pc, schedules });
-});
-
-// 5. PC 시간 증가/차감
-app.post('/api/pcs/:id/adjust-time', checkAuth, (req, res) => {
-  const pcId = req.params.id;
-  const { minutes } = req.body;
-  const addSeconds = minutes * 60;
-
-  db.prepare("UPDATE pcs SET remaining_seconds = MAX(0, remaining_seconds + ?) WHERE id = ?").run(addSeconds, pcId);
-  res.json({ success: true });
-});
-
-// 6. PC 요일별/일괄 시간 수정
-app.post('/api/pcs/:id/update-schedule', checkAuth, (req, res) => {
-  const pcId = req.params.id;
-  const { day_of_week, default_minutes } = req.body;
-
-  if (day_of_week === 'bulk') {
-    db.prepare("UPDATE pc_schedules SET default_minutes = ? WHERE pc_id = ?").run(default_minutes, pcId);
-  } else {
-    db.prepare("UPDATE pc_schedules SET default_minutes = ? WHERE pc_id = ? AND day_of_week = ?").run(default_minutes, pcId, day_of_week);
-  }
-  res.json({ success: true });
-});
-
-// 7. SSH 즉시 종료 실행
 app.post('/api/pcs/:id/shutdown-now', checkAuth, (req, res) => {
-  const pcId = req.params.id;
-  const pc = db.prepare("SELECT ip, ssh_user, ssh_password FROM pcs WHERE id = ?").get(pcId);
+  const pcId = parseInt(req.params.id);
+  const store = db.read();
+  const pc = store.pcs.find(p => p.id === pcId);
 
   if (!pc) return res.status(404).json({ error: 'PC 없음' });
   shutdownPCviaSSH(pc.ip, pc.ssh_user, pc.ssh_password);
   res.json({ success: true, message: '종료 명령을 전송했습니다.' });
 });
 
-// 8. PC 삭제
 app.delete('/api/pcs/:id', checkAuth, (req, res) => {
-  db.prepare("DELETE FROM pcs WHERE id = ?").run(req.params.id);
+  const pcId = parseInt(req.params.id);
+  const store = db.read();
+  store.pcs = store.pcs.filter(p => p.id !== pcId);
+  db.write(store);
   res.json({ success: true });
 });
 
