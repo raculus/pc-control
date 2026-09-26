@@ -3,6 +3,10 @@
 # 컴퓨터 제어 서버
 라즈베리파이에서 대상 컴퓨터로 ping 하여 사용중 여부 파악 및 시간 소진 후 ssh로 종료
 
+## 클라이언트
+https://github.com/raculus/pc-control-client
+
+## 도커 이미지
 https://hub.docker.com/repository/docker/raculus/pc-control
 
 docker-compose.yml
