@@ -211,7 +211,7 @@ async function deletePc() {
 }
 
 async function openAddPcModal() {
-  // 1. 모달 창부터 즉시 띄우기
+  // 모달 창부터 즉시 띄우기
   document.getElementById('add-modal').style.display = 'flex';
   
   const select = document.getElementById('lan-devices');

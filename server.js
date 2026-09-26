@@ -1,7 +1,7 @@
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
-const fs = require('fs'); // <--- fs 모듈 정의
+const fs = require('fs');
 const { exec } = require('child_process');
 const { Client } = require('ssh2');
 const db = require('./database');

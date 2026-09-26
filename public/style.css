@@ -35,7 +35,7 @@ header {
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
-/* 타일형 PCGrid */
+/* 타일형 PC Grid */
 .pc-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -85,17 +85,22 @@ header {
   align-items: center;
   z-index: 1000;
 }
-
 .modal-content {
   background: #fff;
   border-radius: 12px;
-  padding: 24px;
+  overflow: hidden;
+  padding: 0;
   width: 90%;
   max-width: 500px;
   max-height: 90vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+}
 /* 시간 조절 */
 .time-control-group { display: flex; flex-direction: column; gap: 8px; margin: 15px 0; }
 .control-row { display: flex; align-items: center; gap: 8px; }
@@ -113,6 +118,25 @@ header {
 input[type="number"] { width: 55px; text-align: right; padding: 4px; }
 input[type="text"], input[type="password"], select { width: 100%; padding: 8px; margin-top: 4px; margin-bottom: 10px; border: 1px solid var(--border-color); border-radius: 6px; }
 
-button { background: var(--primary-color); color: #fff; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+button {
+  background: var(--primary-color);
+  color: #fff;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 6px; 
+  cursor: pointer; 
+  transition: background-color 0.2s ease, filter 0.2s ease;
+}
+button.btn-danger { background: var(--danger-color); }
+button.btn-secondary { background: #6b7280; }
+
+button:hover {
+  filter: brightness(0.8);
+}
+button:active {
+  filter: brightness(0.6);
+}
+
+/* 색상별 클래스 */
 button.btn-danger { background: var(--danger-color); }
 button.btn-secondary { background: #6b7280; }
