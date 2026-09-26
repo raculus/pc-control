@@ -2,6 +2,8 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const net = require('net');
 const { exec } = require('child_process');
 const { Client } = require('ssh2');
 const db = require('./database');
@@ -20,49 +22,80 @@ const checkAuth = (req, res, next) => {
   else res.status(401).json({ error: '인증 필요' });
 };
 
-// 한국 시간(KST) ISO 규격 문자열 생성 헬퍼
 function getKSTISOString() {
   const now = new Date();
   const kst = new Date(now.getTime() + (9 * 60 * 60 * 1000));
-  return kst.toISOString().replace('Z', '');
+  return kst.toISOString().replace('T', ' ').substring(0, 19);
 }
 
-// MAC 주소 기반 남은 시간 조회
-app.get('/api/client/status-by-mac', (req, res) => {
-  const mac = req.query.mac;
-  if (!mac) return res.status(400).json({ error: 'MAC 주소가 필요합니다.' });
+// 로그 생성 헬퍼 함수 (최대 50개 보관)
+function addLog(pc, type, message) {
+  if (!pc.logs) pc.logs = [];
+  pc.logs.unshift({
+    timestamp: getKSTISOString(),
+    type, // 'PING', 'SHUTDOWN', 'TIME_CHANGE'
+    message
+  });
+  if (pc.logs.length > 50) pc.logs.pop();
+}
+
+// 디스코드 웹훅 전송 함수
+function sendDiscordWebhook(webhookUrl, pcName, ip, message) {
+  if (!webhookUrl) return;
+
+  const payload = JSON.stringify({
+    username: "PC 모니터링 알림", // 웹훅 메시지 프로필 이름
+    avatar_url: "https://github.com/raculus/pc-control-server/blob/main/public/icon.png?raw=true", // 웹훅 프로필 이미지 URL (전체 HTTP/HTTPS 경로)
+    content: `**[경고] PC SSH 접속 실패 알림**`,
+    embeds: [{
+      title: `PC: ${pcName} (${ip})`,
+      description: message,
+      color: 15158332, // Red
+      timestamp: new Date().toISOString()
+    }]
+  });
 
   try {
-    const data = db.read();
-    const cleanMac = mac.trim().toLowerCase();
-    const pc = data.pcs.find(p => p.mac.trim().toLowerCase() === cleanMac);
-
-    if (!pc) {
-      return res.status(404).json({ error: '등록되지 않은 PC입니다.' });
-    }
-
-    const totalRemaining = pc.remaining_seconds + (pc.bonus_seconds || 0);
-    const totalMinutes = Math.floor(totalRemaining / 60);
-
-    res.json({
-      id: pc.id,
-      name: pc.name,
-      // remaining_seconds: pc.remaining_seconds,
-      remaining_seconds: totalRemaining,
-      bonus_seconds: pc.bonus_seconds || 0,
-      total_remaining_seconds: totalRemaining,
-      hours: Math.floor(totalMinutes / 60),
-      minutes: totalMinutes % 60,
-      should_shutdown: totalRemaining <= 0,
-      last_booted_at: pc.last_booted_at
+    const url = new URL(webhookUrl);
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
     });
+
+    req.on('error', (e) => console.error('[Discord Webhook Error]', e.message));
+    req.write(payload);
+    req.end();
   } catch (err) {
-    res.status(500).json({ error: 'DB 조회 실패' });
+    console.error('[Discord URL Error]', err.message);
   }
-});
+}
+
+// SSH Port(22) 오픈 여부 확인 헬퍼 함수
+function checkSshPort(ip, timeout = 3000) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let isConnected = false;
+
+    socket.setTimeout(timeout);
+    socket.on('connect', () => {
+      isConnected = true;
+      socket.destroy();
+    });
+    socket.on('timeout', () => socket.destroy());
+    socket.on('error', () => socket.destroy());
+    socket.on('close', () => resolve(isConnected));
+
+    socket.connect(22, ip);
+  });
+}
 
 // SSH 원격 종료 함수
-function shutdownPCviaSSH(ip, user, password) {
+function shutdownPCviaSSH(ip, user, password, pc) {
   const conn = new Client();
   conn.on('ready', () => {
     conn.exec('shutdown /s /t 60 /f || shutdown -h now', (err, stream) => {
@@ -80,15 +113,12 @@ function shutdownPCviaSSH(ip, user, password) {
   });
 }
 
-// 날짜 변경 감지 및 자정 리필 변수
+// 날짜 변경 감지 및 자정 리필
 let lastRefillDate = new Date().toDateString();
-
 setInterval(() => {
   const currentDate = new Date().toDateString();
-
   if (currentDate !== lastRefillDate) {
     lastRefillDate = currentDate;
-
     try {
       const store = db.read();
       const currentDayOfWeek = new Date().getDay();
@@ -97,13 +127,11 @@ setInterval(() => {
         if (pc.schedules && Array.isArray(pc.schedules)) {
           const todaySchedule = pc.schedules.find(s => s.day_of_week === currentDayOfWeek);
           if (todaySchedule) {
-            // 기본시간만 해당 요일 기본값으로 초기화 (보너스시간은 그대로 유지)
             pc.remaining_seconds = todaySchedule.default_minutes * 60;
-            console.log(`[자정 리필] ${pc.name} PC: 기본시간 ${todaySchedule.default_minutes}분 리필 (보너스시간: ${Math.floor((pc.bonus_seconds||0)/60)}분 유지)`);
+            addLog(pc, 'TIME_CHANGE', `[자정 리필] 기본 시간 ${todaySchedule.default_minutes}분 설정`);
           }
         }
       });
-
       db.write(store);
     } catch (err) {
       console.error("[Refill Error]", err.message);
@@ -111,7 +139,7 @@ setInterval(() => {
   }
 }, 60000);
 
-// 백그라운드 30초 감시 및 시간 차감 타이머
+// 백그라운드 30초 감시 및 SSH 상태 체크
 setInterval(() => {
   exec('arp -a', (err, stdout) => {
     if (err) return;
@@ -131,8 +159,9 @@ setInterval(() => {
 
     try {
       const store = db.read();
+      const webhookUrl = store.admin_config ? store.admin_config.discord_webhook_url : '';
 
-      store.pcs.forEach((pc) => {
+      store.pcs.forEach(async (pc) => {
         const targetMac = pc.mac.toLowerCase();
         const currentIp = arpMap.get(targetMac) || pc.ip;
 
@@ -144,14 +173,13 @@ setInterval(() => {
           ? `ping -n 1 -w 1000 ${currentIp}` 
           : `ping -c 1 -W 1 ${currentIp}`;
 
-        exec(pingCmd, (error) => {
+        exec(pingCmd, async (error) => {
           const isOnline = !error ? 1 : 0;
           const kstNow = getKSTISOString();
 
           if (isOnline) {
             let deduct = 30;
 
-            // 1. 기본 제공 시간 우선 차감
             if (pc.remaining_seconds > 0) {
               if (pc.remaining_seconds >= deduct) {
                 pc.remaining_seconds -= deduct;
@@ -162,7 +190,6 @@ setInterval(() => {
               }
             }
 
-            // 2. 남은 차감 시간이 있고 보너스 시간이 있으면 차감
             if (deduct > 0 && pc.bonus_seconds > 0) {
               pc.bonus_seconds = Math.max(0, pc.bonus_seconds - deduct);
             }
@@ -174,19 +201,36 @@ setInterval(() => {
               pc.ip = currentIp;
               pc.last_seen = kstNow;
               pc.last_booted_at = kstNow;
+              addLog(pc, 'PING', `Ping 응답 성공 (온라인 감지)`);
             } else {
               pc.is_online = 1;
               pc.ip = currentIp;
               pc.last_seen = kstNow;
             }
 
-            // 총 시간이 0이 되었을 때 종료
+            // SSH 포트 상태 점검 (Ping 성공 조건 하에서 수행)
+            const sshOk = await checkSshPort(currentIp);
+            if (!sshOk) {
+              // 최초 실패 시에만 디스코드 알림 발송 (도배 방지)
+              if (!pc.ssh_failed) {
+                pc.ssh_failed = true;
+                addLog(pc, 'PING', `Ping은 도달하나 SSH 접속(22번 포트) 실패`);
+                sendDiscordWebhook(webhookUrl, pc.name, currentIp, `Ping 응답은 정상이지만 SSH(Port 22) 응답이 없습니다.`);
+              }
+            } else {
+              pc.ssh_failed = false;
+            }
+
             if (totalRemaining === 0) {
-              console.log(`[시간 소진] ${pc.name}(${currentIp}) 원격 종료 요청`);
-              shutdownPCviaSSH(currentIp, pc.ssh_user, pc.ssh_password);
+              addLog(pc, 'SHUTDOWN', `시간 소진으로 인한 원격 종료 실행`);
+              shutdownPCviaSSH(currentIp, pc.ssh_user, pc.ssh_password, pc);
             }
           } else {
+            if (pc.is_online === 1) {
+              addLog(pc, 'PING', `Ping 응답 없음 (오프라인 전환)`);
+            }
             pc.is_online = 0;
+            pc.ssh_failed = false;
           }
 
           db.write(store);
@@ -198,11 +242,10 @@ setInterval(() => {
   });
 }, 30000);
 
-// API 엔드포인트
+// Admin API
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   const store = db.read();
-
   if (store.admin_config && store.admin_config.admin_password === password) {
     req.session.authenticated = true;
     res.json({ success: true });
@@ -214,7 +257,6 @@ app.post('/api/admin/login', (req, res) => {
 app.post('/api/admin/change-password', checkAuth, (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const store = db.read();
-
   if (store.admin_config && store.admin_config.admin_password === currentPassword) {
     store.admin_config.admin_password = newPassword;
     db.write(store);
@@ -224,23 +266,35 @@ app.post('/api/admin/change-password', checkAuth, (req, res) => {
   }
 });
 
-// LAN ARP 탐색 목록 가져오기 (fs 활용)
+// 웹훅 설정 가져오기 및 저장 API
+app.get('/api/admin/webhook', checkAuth, (req, res) => {
+  const store = db.read();
+  res.json({ discord_webhook_url: store.admin_config?.discord_webhook_url || '' });
+});
+
+app.post('/api/admin/webhook', checkAuth, (req, res) => {
+  const { discord_webhook_url } = req.body;
+  const store = db.read();
+  if (!store.admin_config) store.admin_config = {};
+  store.admin_config.discord_webhook_url = discord_webhook_url || '';
+  db.write(store);
+  res.json({ success: true });
+});
+
+// LAN ARP 탐색
 app.get('/api/lan/devices', checkAuth, (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-
   if (fs.existsSync('/proc/net/arp')) {
     try {
       const content = fs.readFileSync('/proc/net/arp', 'utf-8');
       const lines = content.split('\n').slice(1);
       const devices = [];
-
       lines.forEach(line => {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 4) {
           const ip = parts[0];
           const flags = parts[2];
           const mac = parts[3];
-
           if (flags !== '0x0' && mac && mac !== '00:00:00:00:00:00') {
             const formattedMac = mac.split(':').map(hex => hex.padStart(2, '0')).join(':').toLowerCase();
             if (!devices.some(d => d.mac === formattedMac) && !ip.startsWith('127.')) {
@@ -249,7 +303,6 @@ app.get('/api/lan/devices', checkAuth, (req, res) => {
           }
         }
       });
-
       return res.json(devices);
     } catch (e) {
       console.error('[ARP Read Error]', e);
@@ -260,7 +313,6 @@ app.get('/api/lan/devices', checkAuth, (req, res) => {
     if (err) return res.json([]);
     const devices = [];
     const ipMacRegex = /((?:\d{1,3}\.){3}\d{1,3})\s+([0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2}[:-][0-9a-fa-f]{2})/i;
-
     stdout.split('\n').forEach(line => {
       const match = line.match(ipMacRegex);
       if (match) {
@@ -286,25 +338,10 @@ app.get('/api/pcs', checkAuth, (req, res) => {
     remaining_seconds: pc.remaining_seconds,
     bonus_seconds: pc.bonus_seconds || 0,
     is_online: pc.is_online,
+    ssh_failed: pc.ssh_failed || false,
     last_booted_at: pc.last_booted_at
   }));
   res.json(rows || []);
-});
-
-// 보너스 시간 부여/차감
-app.post('/api/pcs/:id/adjust-bonus-time', checkAuth, (req, res) => {
-  const pcId = parseInt(req.params.id);
-  const { minutes } = req.body;
-  const addSeconds = minutes * 60;
-
-  const store = db.read();
-  const pc = store.pcs.find(p => p.id === pcId);
-  if (pc) {
-    if (!pc.bonus_seconds) pc.bonus_seconds = 0;
-    pc.bonus_seconds = Math.max(0, pc.bonus_seconds + addSeconds);
-    db.write(store);
-  }
-  res.json({ success: true });
 });
 
 app.post('/api/pcs', checkAuth, (req, res) => {
@@ -332,11 +369,13 @@ app.post('/api/pcs', checkAuth, (req, res) => {
       ssh_user: ssh_user || 'administrator',
       ssh_password: ssh_password || '',
       remaining_seconds: 0,
-      bonus_seconds: 0, // 보너스 시간 필드 추가
+      bonus_seconds: 0,
       is_online: 0,
+      ssh_failed: false,
       last_seen: null,
       last_booted_at: null,
-      schedules: defaultSchedules
+      schedules: defaultSchedules,
+      logs: []
     };
 
     store.pcs.push(newPc);
@@ -355,8 +394,8 @@ app.get('/api/pcs/:id', checkAuth, (req, res) => {
 
   if (!pc) return res.status(404).json({ error: 'PC를 찾을 수 없습니다.' });
 
-  const { schedules, ...pcData } = pc;
-  res.json({ pc: pcData, schedules: schedules || [] });
+  const { schedules, logs, ...pcData } = pc;
+  res.json({ pc: pcData, schedules: schedules || [], logs: logs || [] });
 });
 
 app.post('/api/pcs/:id/adjust-time', checkAuth, (req, res) => {
@@ -368,6 +407,25 @@ app.post('/api/pcs/:id/adjust-time', checkAuth, (req, res) => {
   const pc = store.pcs.find(p => p.id === pcId);
   if (pc) {
     pc.remaining_seconds = Math.max(0, pc.remaining_seconds + addSeconds);
+    const actionStr = minutes >= 0 ? `+${minutes}분 추가` : `${minutes}분 차감`;
+    addLog(pc, 'TIME_CHANGE', `기본 시간 ${actionStr}`);
+    db.write(store);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/pcs/:id/adjust-bonus-time', checkAuth, (req, res) => {
+  const pcId = parseInt(req.params.id);
+  const { minutes } = req.body;
+  const addSeconds = minutes * 60;
+
+  const store = db.read();
+  const pc = store.pcs.find(p => p.id === pcId);
+  if (pc) {
+    if (!pc.bonus_seconds) pc.bonus_seconds = 0;
+    pc.bonus_seconds = Math.max(0, pc.bonus_seconds + addSeconds);
+    const actionStr = minutes >= 0 ? `+${minutes}분 추가` : `${minutes}분 차감`;
+    addLog(pc, 'TIME_CHANGE', `보너스 시간 ${actionStr}`);
     db.write(store);
   }
   res.json({ success: true });
@@ -384,10 +442,13 @@ app.post('/api/pcs/:id/update-schedule', checkAuth, (req, res) => {
   if (pc) {
     if (day_of_week === 'bulk') {
       pc.schedules.forEach(s => s.default_minutes = cappedMinutes);
+      addLog(pc, 'TIME_CHANGE', `전체 요일 기본 시간 ${cappedMinutes}분 일괄 설정`);
     } else {
       const targetDay = parseInt(day_of_week);
       const schedule = pc.schedules.find(s => s.day_of_week === targetDay);
       if (schedule) schedule.default_minutes = cappedMinutes;
+      const days = ['일', '월', '화', '수', '목', '금', '토'];
+      addLog(pc, 'TIME_CHANGE', `${days[targetDay]}요일 기본 시간 ${cappedMinutes}분 설정`);
     }
     db.write(store);
   }
@@ -400,7 +461,9 @@ app.post('/api/pcs/:id/shutdown-now', checkAuth, (req, res) => {
   const pc = store.pcs.find(p => p.id === pcId);
 
   if (!pc) return res.status(404).json({ error: 'PC 없음' });
-  shutdownPCviaSSH(pc.ip, pc.ssh_user, pc.ssh_password);
+  shutdownPCviaSSH(pc.ip, pc.ssh_user, pc.ssh_password, pc);
+  addLog(pc, 'SHUTDOWN', `관리자 즉시 종료 명령 전송`);
+  db.write(store);
   res.json({ success: true, message: '종료 명령을 전송했습니다.' });
 });
 

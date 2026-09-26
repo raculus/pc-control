@@ -1,6 +1,5 @@
 let currentPcId = null;
 
-// 최근 부팅 시점(last_booted_at)으로부터 현재까지 사용한 시간을 계산하는 함수
 function calcUsedTime(lastBootedAt, isOnline) {
   if (!isOnline || !lastBootedAt) return "0시간 0분";
   
@@ -17,7 +16,6 @@ function calcUsedTime(lastBootedAt, isOnline) {
   return `${hours}시간 ${minutes}분`;
 }
 
-// 24시간 00분 초과 금지 실시간 검증 함수
 function validateTimeInput(hoursId, minutesId) {
   const hInput = document.getElementById(hoursId);
   const mInput = document.getElementById(minutesId);
@@ -60,7 +58,7 @@ async function login(pwOverride) {
     document.getElementById('dashboard').style.display = 'block';
     document.getElementById('header-actions').style.display = 'block';
     loadPcs();
-    setInterval(loadPcs, 10000); // 10초마다 상태 동기화
+    setInterval(loadPcs, 10000);
   } else {
     alert('비밀번호 불일치');
     localStorage.removeItem('admin_password');
@@ -72,7 +70,6 @@ function logout() {
   location.reload();
 }
 
-// 부모 화면: PC 목록 카드 갱신
 async function loadPcs() {
   const res = await fetch('/api/pcs');
   if (!res.ok) return;
@@ -88,11 +85,15 @@ async function loadPcs() {
     const hours = Math.floor(totalMin / 60);
     const minutes = totalMin % 60;
 
-    const statusText = pc.is_online ? '켜짐' : '꺼짐';
+    let statusText = pc.is_online ? '켜짐' : '꺼짐';
+    if (pc.is_online && pc.ssh_failed) {
+      statusText = 'SSH 연결 오류 ⚠️';
+    }
+
     const usedTimeText = calcUsedTime(pc.last_booted_at, pc.is_online);
 
     const card = document.createElement('div');
-    card.className = `pc-card ${pc.is_online ? 'online' : 'offline'}`;
+    card.className = `pc-card ${pc.is_online ? 'online' : 'offline'} ${pc.ssh_failed ? 'ssh-error' : ''}`;
     card.onclick = () => openDetailModal(pc.id);
     card.innerHTML = `
       <div class="pc-name"><span class="status-badge"></span>${pc.name}</div>
@@ -104,7 +105,6 @@ async function loadPcs() {
   });
 }
 
-// 보너스 시간 조정 함수
 async function adjustBonusTime(minutes) {
   await fetch(`/api/pcs/${currentPcId}/adjust-bonus-time`, {
     method: 'POST',
@@ -115,7 +115,6 @@ async function adjustBonusTime(minutes) {
   loadPcs();
 }
 
-// 자식 화면: 특정 PC 클릭 시 상세 모달 오픈
 async function openDetailModal(pcId) {
   currentPcId = pcId;
   const res = await fetch(`/api/pcs/${pcId}`);
@@ -127,18 +126,30 @@ async function openDetailModal(pcId) {
   document.getElementById('modal-pc-name').innerText = pc.name;
   document.getElementById('modal-pc-info').innerText = `IP: ${pc.ip} | MAC: ${pc.mac}`;
 
-  // 기본 남은 시간 계산 및 출력 (ID: modal-base-time)
   const baseTotalMin = Math.floor((pc.remaining_seconds || 0) / 60);
   const baseH = Math.floor(baseTotalMin / 60);
   const baseM = baseTotalMin % 60;
   document.getElementById('modal-base-time').innerText = `${baseH}시간 ${baseM}분`;
 
-  // 보너스 남은 시간 계산 및 출력 (ID: modal-bonus-time)
   const bonusTotalMin = Math.floor((pc.bonus_seconds || 0) / 60);
   const bonusH = Math.floor(bonusTotalMin / 60);
   const bonusM = bonusTotalMin % 60;
   document.getElementById('modal-bonus-time').innerText = `${bonusH}시간 ${bonusM}분`;
   document.getElementById('modal-used-time').innerText = calcUsedTime(pc.last_booted_at, pc.is_online);
+
+  // 최근 활동 기록 바인딩
+  const logContainer = document.getElementById('log-container');
+  logContainer.innerHTML = '';
+  if (data.logs && data.logs.length > 0) {
+    data.logs.forEach(log => {
+      const item = document.createElement('div');
+      item.className = 'log-item';
+      item.innerHTML = `<span class="log-time">${log.timestamp}</span> <span class="log-tag log-${log.type.toLowerCase()}">[${log.type}]</span> ${log.message}`;
+      logContainer.appendChild(item);
+    });
+  } else {
+    logContainer.innerHTML = '<p style="color: #6b7280; font-size: 0.85rem;">기록이 없습니다.</p>';
+  }
 
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   const scheduleContainer = document.getElementById('schedule-list');
@@ -176,7 +187,6 @@ async function adjustTime(minutes) {
   loadPcs();
 }
 
-// 요일별 시간 수정 함수
 async function updateSchedule(day_of_week) {
   let hours = parseInt(document.getElementById(`day-h-${day_of_week}`).value) || 0;
   let minutes = parseInt(document.getElementById(`day-m-${day_of_week}`).value) || 0;
@@ -197,7 +207,6 @@ async function updateSchedule(day_of_week) {
   openDetailModal(currentPcId);
 }
 
-// 일괄 시간 수정 함수
 async function updateScheduleBulk() {
   let hours = parseInt(document.getElementById('bulk-hours').value) || 0;
   let minutes = parseInt(document.getElementById('bulk-minutes').value) || 0;
@@ -222,6 +231,7 @@ async function shutdownNow() {
   const res = await fetch(`/api/pcs/${currentPcId}/shutdown-now`, { method: 'POST' });
   const data = await res.json();
   alert(data.message || '종료 요청 전달됨');
+  openDetailModal(currentPcId);
 }
 
 async function deletePc() {
@@ -232,14 +242,11 @@ async function deletePc() {
 }
 
 async function openAddPcModal() {
-  // 모달 창부터 즉시 띄우기
   document.getElementById('add-modal').style.display = 'flex';
-  
   const select = document.getElementById('lan-devices');
   select.innerHTML = '<option value="">🔍 주변 장치 스캔 중...</option>';
 
   try {
-    // URL 뒤에 v=타임스탬프를 붙여 브라우저 304 캐시 완벽 방지
     const res = await fetch(`/api/lan/devices?v=${Date.now()}`);
     if (!res.ok) throw new Error('ARP 탐색 실패');
     
@@ -290,11 +297,35 @@ async function saveNewPc() {
   }
 }
 
+async function openWebhookModal() {
+  const res = await fetch('/api/admin/webhook');
+  if (res.ok) {
+    const data = await res.json();
+    document.getElementById('webhook-url').value = data.discord_webhook_url || '';
+  }
+  document.getElementById('webhook-modal').style.display = 'flex';
+}
+
+async function saveWebhook() {
+  const discord_webhook_url = document.getElementById('webhook-url').value;
+  const res = await fetch('/api/admin/webhook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ discord_webhook_url })
+  });
+
+  if (res.ok) {
+    alert('웹훅 URL이 저장되었습니다.');
+    closeModal('webhook-modal');
+  } else {
+    alert('저장 실패');
+  }
+}
+
 function closeModal(id) {
   document.getElementById(id).style.display = 'none';
 }
 
-// 비밀번호 변경 모달 열기
 function openChangePasswordModal() {
   document.getElementById('change-current-pw').value = '';
   document.getElementById('change-new-pw').value = '';
@@ -302,7 +333,6 @@ function openChangePasswordModal() {
   document.getElementById('change-pw-modal').style.display = 'flex';
 }
 
-// 비밀번호 변경 API 호출
 async function changePassword() {
   const currentPassword = document.getElementById('change-current-pw').value;
   const newPassword = document.getElementById('change-new-pw').value;
@@ -327,7 +357,7 @@ async function changePassword() {
   if (res.ok) {
     alert('비밀번호가 성공적으로 변경되었습니다. 다시 로그인해 주세요.');
     closeModal('change-pw-modal');
-    logout(); // 변경 후 자동 로그아웃 처리
+    logout();
   } else {
     alert(data.message || '비밀번호 변경 실패');
   }

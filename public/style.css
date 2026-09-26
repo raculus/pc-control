@@ -60,6 +60,7 @@ header {
 
 .pc-card.online { border-color: var(--success-color); }
 .pc-card.offline { border-color: #9ca3af; opacity: 0.85; }
+.pc-card.ssh-error { border-color: var(--danger-color); }
 
 .status-badge {
   display: inline-block;
@@ -70,10 +71,33 @@ header {
 }
 .online .status-badge { background-color: var(--success-color); }
 .offline .status-badge { background-color: #9ca3af; }
+.ssh-error .status-badge { background-color: var(--danger-color); }
 
 .pc-name { font-size: 1.2rem; font-weight: bold; margin-bottom: 8px; }
 .pc-info { font-size: 0.85rem; color: #6b7280; margin-bottom: 12px; }
 .pc-time { font-size: 1.4rem; font-weight: bold; color: var(--primary-color); text-align: center; }
+
+/* 로그 컨테이너 스타일 */
+.log-container {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+  background: #f9fafb;
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+.log-item {
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border-color);
+}
+.log-item:last-child { border-bottom: none; }
+.log-time { color: #6b7280; margin-right: 6px; }
+.log-tag { font-weight: bold; margin-right: 4px; }
+.log-ping { color: #3b82f6; }
+.log-shutdown { color: var(--danger-color); }
+.log-time_change { color: #10b981; }
 
 /* 모달 팝업 */
 .modal {
@@ -101,7 +125,7 @@ header {
   padding: 24px;
   overflow-y: auto;
 }
-/* 시간 조절 */
+
 .time-control-group { display: flex; flex-direction: column; gap: 8px; margin: 15px 0; }
 .control-row { display: flex; align-items: center; gap: 8px; }
 .control-label { font-weight: bold; width: 40px; }
@@ -111,7 +135,6 @@ header {
 .btn-group { display: flex; gap: 6px; flex: 1; }
 .btn-group button { flex: 1; padding: 6px; font-size: 0.85rem; }
 
-/* 요일 설정 */
 .bulk-box { display: flex; gap: 6px; align-items: center; background: #f9fafb; padding: 10px; border-radius: 8px; margin-bottom: 12px; }
 .schedule-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color); }
 
@@ -130,13 +153,5 @@ button {
 button.btn-danger { background: var(--danger-color); }
 button.btn-secondary { background: #6b7280; }
 
-button:hover {
-  filter: brightness(0.8);
-}
-button:active {
-  filter: brightness(0.6);
-}
-
-/* 색상별 클래스 */
-button.btn-danger { background: var(--danger-color); }
-button.btn-secondary { background: #6b7280; }
+button:hover { filter: brightness(0.8); }
+button:active { filter: brightness(0.6); }
