@@ -41,17 +41,19 @@ app.get('/api/client/status-by-mac', (req, res) => {
       return res.status(404).json({ error: '등록되지 않은 PC입니다.' });
     }
 
-    const totalMinutes = Math.floor(pc.remaining_seconds / 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
+    const totalRemaining = pc.remaining_seconds + (pc.bonus_seconds || 0);
+    const totalMinutes = Math.floor(totalRemaining / 60);
 
     res.json({
       id: pc.id,
       name: pc.name,
-      remaining_seconds: pc.remaining_seconds,
-      hours: hours,
-      minutes: minutes,
-      should_shutdown: pc.remaining_seconds <= 0,
+      // remaining_seconds: pc.remaining_seconds,
+      remaining_seconds: totalRemaining,
+      bonus_seconds: pc.bonus_seconds || 0,
+      total_remaining_seconds: totalRemaining,
+      hours: Math.floor(totalMinutes / 60),
+      minutes: totalMinutes % 60,
+      should_shutdown: totalRemaining <= 0,
       last_booted_at: pc.last_booted_at
     });
   } catch (err) {
@@ -77,6 +79,37 @@ function shutdownPCviaSSH(ip, user, password) {
     readyTimeout: 5000
   });
 }
+
+// 날짜 변경 감지 및 자정 리필 변수
+let lastRefillDate = new Date().toDateString();
+
+setInterval(() => {
+  const currentDate = new Date().toDateString();
+
+  if (currentDate !== lastRefillDate) {
+    lastRefillDate = currentDate;
+
+    try {
+      const store = db.read();
+      const currentDayOfWeek = new Date().getDay();
+
+      store.pcs.forEach((pc) => {
+        if (pc.schedules && Array.isArray(pc.schedules)) {
+          const todaySchedule = pc.schedules.find(s => s.day_of_week === currentDayOfWeek);
+          if (todaySchedule) {
+            // 기본시간만 해당 요일 기본값으로 초기화 (보너스시간은 그대로 유지)
+            pc.remaining_seconds = todaySchedule.default_minutes * 60;
+            console.log(`[자정 리필] ${pc.name} PC: 기본시간 ${todaySchedule.default_minutes}분 리필 (보너스시간: ${Math.floor((pc.bonus_seconds||0)/60)}분 유지)`);
+          }
+        }
+      });
+
+      db.write(store);
+    } catch (err) {
+      console.error("[Refill Error]", err.message);
+    }
+  }
+}, 60000);
 
 // 백그라운드 30초 감시 및 시간 차감 타이머
 setInterval(() => {
@@ -116,23 +149,39 @@ setInterval(() => {
           const kstNow = getKSTISOString();
 
           if (isOnline) {
-            let newTime = Math.max(0, pc.remaining_seconds - 30);
-            
+            let deduct = 30;
+
+            // 1. 기본 제공 시간 우선 차감
+            if (pc.remaining_seconds > 0) {
+              if (pc.remaining_seconds >= deduct) {
+                pc.remaining_seconds -= deduct;
+                deduct = 0;
+              } else {
+                deduct -= pc.remaining_seconds;
+                pc.remaining_seconds = 0;
+              }
+            }
+
+            // 2. 남은 차감 시간이 있고 보너스 시간이 있으면 차감
+            if (deduct > 0 && pc.bonus_seconds > 0) {
+              pc.bonus_seconds = Math.max(0, pc.bonus_seconds - deduct);
+            }
+
+            const totalRemaining = pc.remaining_seconds + (pc.bonus_seconds || 0);
+
             if (pc.is_online === 0) {
-              console.log(`[부팅 감지] ${pc.name}(${currentIp}) PC 최초 켜짐 시점 기록`);
               pc.is_online = 1;
               pc.ip = currentIp;
-              pc.remaining_seconds = newTime;
               pc.last_seen = kstNow;
               pc.last_booted_at = kstNow;
             } else {
               pc.is_online = 1;
               pc.ip = currentIp;
-              pc.remaining_seconds = newTime;
               pc.last_seen = kstNow;
             }
 
-            if (newTime === 0 && pc.remaining_seconds > 0) {
+            // 총 시간이 0이 되었을 때 종료
+            if (totalRemaining === 0) {
               console.log(`[시간 소진] ${pc.name}(${currentIp}) 원격 종료 요청`);
               shutdownPCviaSSH(currentIp, pc.ssh_user, pc.ssh_password);
             }
@@ -235,10 +284,27 @@ app.get('/api/pcs', checkAuth, (req, res) => {
     mac: pc.mac,
     ssh_user: pc.ssh_user,
     remaining_seconds: pc.remaining_seconds,
+    bonus_seconds: pc.bonus_seconds || 0,
     is_online: pc.is_online,
     last_booted_at: pc.last_booted_at
   }));
   res.json(rows || []);
+});
+
+// 보너스 시간 부여/차감
+app.post('/api/pcs/:id/adjust-bonus-time', checkAuth, (req, res) => {
+  const pcId = parseInt(req.params.id);
+  const { minutes } = req.body;
+  const addSeconds = minutes * 60;
+
+  const store = db.read();
+  const pc = store.pcs.find(p => p.id === pcId);
+  if (pc) {
+    if (!pc.bonus_seconds) pc.bonus_seconds = 0;
+    pc.bonus_seconds = Math.max(0, pc.bonus_seconds + addSeconds);
+    db.write(store);
+  }
+  res.json({ success: true });
 });
 
 app.post('/api/pcs', checkAuth, (req, res) => {
@@ -266,6 +332,7 @@ app.post('/api/pcs', checkAuth, (req, res) => {
       ssh_user: ssh_user || 'administrator',
       ssh_password: ssh_password || '',
       remaining_seconds: 0,
+      bonus_seconds: 0, // 보너스 시간 필드 추가
       is_online: 0,
       last_seen: null,
       last_booted_at: null,

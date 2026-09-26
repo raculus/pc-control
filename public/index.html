@@ -42,59 +42,87 @@
         <p id="modal-pc-info" class="pc-info"></p>
         
         <div class="card">
-          <h4>시간 현황</h4>
-        <div style="display: flex; justify-content: space-around; align-items: center; margin: 15px 0; text-align: center;">
-          <div>
-            <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 4px;">사용한 시간</div>
-            <div style="font-size: 1.3rem; font-weight: bold; color: #374151;" id="modal-used-time">0시간 0분</div>
+          <!-- <h4>시간 현황</h4> -->
+          <div style="display: flex; justify-content: space-around; align-items: center; margin: 15px 0; text-align: center;">
+            <div>
+              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 4px;">사용한 시간</div>
+              <div style="font-size: 1.1rem; font-weight: bold; color: #374151;" id="modal-used-time">0시간 0분</div>
+            </div>
+            <div style="width: 1px; height: 35px; background-color: var(--border-color);"></div>
+            <div>
+              <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 4px;">기본 남은 시간</div>
+              <div style="font-size: 1.1rem; font-weight: bold; color: var(--primary-color);" id="modal-base-time">0시간 0분</div>
+            </div>
+            <div style="width: 1px; height: 35px; background-color: var(--border-color);"></div>
+            <div>
+              <div style="font-size: 0.85rem; color: #10b981; margin-bottom: 4px;">보너스 시간</div>
+              <div style="font-size: 1.1rem; font-weight: bold; color: #10b981;" id="modal-bonus-time">0시간 0분</div>
+            </div>
           </div>
-          <div style="width: 1px; height: 35px; background-color: var(--border-color);"></div>
-          <div>
-            <div style="font-size: 0.85rem; color: #6b7280; margin-bottom: 4px;">현재 남은 시간</div>
-            <div style="font-size: 1.5rem; font-weight: bold; color: var(--primary-color);" id="modal-remaining-time">0시간 0분</div>
+
+          <!-- 보너스 시간 지급/차감 버튼 -->
+          <div class="time-control-group">
+            <h5>보너스 시간 조정</h5>
+            <div class="control-row">
+              <span class="control-label increase">지급</span>
+              <div class="btn-group">
+                <button onclick="adjustBonusTime(60)">+1시간</button>
+                <button onclick="adjustBonusTime(30)">+30분</button>
+                <button onclick="adjustBonusTime(10)">+10분</button>
+              </div>
+            </div>
+            <div class="control-row">
+              <span class="control-label decrease">차감</span>
+              <div class="btn-group">
+                <button class="btn-secondary" onclick="adjustBonusTime(-60)">-1시간</button>
+                <button class="btn-secondary" onclick="adjustBonusTime(-30)">-30분</button>
+                <button class="btn-secondary" onclick="adjustBonusTime(-10)">-10분</button>
+              </div>
+            </div>
           </div>
-        </div>
         
-        <div class="time-control-group">
-          <div class="control-row">
-            <span class="control-label increase">증가</span>
-            <div class="btn-group">
-              <button onclick="adjustTime(60)">1시간</button>
-              <button onclick="adjustTime(30)">30분</button>
-              <button onclick="adjustTime(10)">10분</button>
+          <!-- 기본 시간 조정 버튼 -->
+          <div class="time-control-group" style="margin-top: 15px;">
+            <h5>기본 시간 조정</h5>
+            <div class="control-row">
+              <span class="control-label increase">증가</span>
+              <div class="btn-group">
+                <button onclick="adjustTime(60)">1시간</button>
+                <button onclick="adjustTime(30)">30분</button>
+                <button onclick="adjustTime(10)">10분</button>
+              </div>
             </div>
-          </div>
-          <div class="control-row">
-            <span class="control-label decrease">차감</span>
-            <div class="btn-group">
-              <button class="btn-secondary" onclick="adjustTime(-60)">1시간</button>
-              <button class="btn-secondary" onclick="adjustTime(-30)">30분</button>
-              <button class="btn-secondary" onclick="adjustTime(-10)">10분</button>
+            <div class="control-row">
+              <span class="control-label decrease">차감</span>
+              <div class="btn-group">
+                <button class="btn-secondary" onclick="adjustTime(-60)">1시간</button>
+                <button class="btn-secondary" onclick="adjustTime(-30)">30분</button>
+                <button class="btn-secondary" onclick="adjustTime(-10)">10분</button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="card">
-        <h4>요일별 기본 제공 시간</h4>
-        <div class="bulk-box">
-          <span>일괄 입력:</span>
-          <input type="number" id="bulk-hours" min="0" max="24" value="0" oninput="validateTimeInput('bulk-hours', 'bulk-minutes')"> 시간
-          <input type="number" id="bulk-minutes" min="0" max="59" value="0" oninput="validateTimeInput('bulk-hours', 'bulk-minutes')"> 분
-          <button onclick="updateScheduleBulk()">적용</button>
+        <div class="card">
+          <h4>요일별 기본 제공 시간</h4>
+          <div class="bulk-box">
+            <span>일괄 입력:</span>
+            <input type="number" id="bulk-hours" min="0" max="24" value="0" oninput="validateTimeInput('bulk-hours', 'bulk-minutes')"> 시간
+            <input type="number" id="bulk-minutes" min="0" max="59" value="0" oninput="validateTimeInput('bulk-hours', 'bulk-minutes')"> 분
+            <button onclick="updateScheduleBulk()">적용</button>
+          </div>
+          <div id="schedule-list"></div>
         </div>
-        <div id="schedule-list"></div>
-      </div>
 
-      <div style="display: flex; gap: 8px; justify-content: space-between; margin-top: 15px;">
-        <button class="btn-danger" onclick="shutdownNow()">즉시 종료</button>
-        <div>
-          <button class="btn-danger" onclick="deletePc()">등록 삭제</button>
-          <button class="btn-secondary" onclick="closeModal('detail-modal')">닫기</button>
+        <div style="display: flex; gap: 8px; justify-content: space-between; margin-top: 15px;">
+          <button class="btn-danger" onclick="shutdownNow()">즉시 종료</button>
+          <div>
+            <button class="btn-danger" onclick="deletePc()">등록 삭제</button>
+            <button class="btn-secondary" onclick="closeModal('detail-modal')">닫기</button>
+          </div>
         </div>
       </div>
     </div>
-  </div>
   </div>
 
   <!-- [추가 모달] LAN 탐색 및 PC 추가 -->

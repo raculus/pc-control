@@ -82,9 +82,12 @@ async function loadPcs() {
   grid.innerHTML = '';
 
   pcs.forEach(pc => {
-    const totalMinutes = Math.floor(pc.remaining_seconds / 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
+    const baseMin = Math.floor(pc.remaining_seconds / 60);
+    const bonusMin = Math.floor((pc.bonus_seconds || 0) / 60);
+    const totalMin = baseMin + bonusMin;
+    const hours = Math.floor(totalMin / 60);
+    const minutes = totalMin % 60;
+
     const statusText = pc.is_online ? '켜짐' : '꺼짐';
     const usedTimeText = calcUsedTime(pc.last_booted_at, pc.is_online);
 
@@ -101,6 +104,17 @@ async function loadPcs() {
   });
 }
 
+// 보너스 시간 조정 함수
+async function adjustBonusTime(minutes) {
+  await fetch(`/api/pcs/${currentPcId}/adjust-bonus-time`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ minutes })
+  });
+  openDetailModal(currentPcId);
+  loadPcs();
+}
+
 // 자식 화면: 특정 PC 클릭 시 상세 모달 오픈
 async function openDetailModal(pcId) {
   currentPcId = pcId;
@@ -113,10 +127,17 @@ async function openDetailModal(pcId) {
   document.getElementById('modal-pc-name').innerText = pc.name;
   document.getElementById('modal-pc-info').innerText = `IP: ${pc.ip} | MAC: ${pc.mac}`;
 
-  const totalMinutes = Math.floor(pc.remaining_seconds / 60);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  document.getElementById('modal-remaining-time').innerText = `${hours}시간 ${minutes}분`;
+  // 기본 남은 시간 계산 및 출력 (ID: modal-base-time)
+  const baseTotalMin = Math.floor((pc.remaining_seconds || 0) / 60);
+  const baseH = Math.floor(baseTotalMin / 60);
+  const baseM = baseTotalMin % 60;
+  document.getElementById('modal-base-time').innerText = `${baseH}시간 ${baseM}분`;
+
+  // 보너스 남은 시간 계산 및 출력 (ID: modal-bonus-time)
+  const bonusTotalMin = Math.floor((pc.bonus_seconds || 0) / 60);
+  const bonusH = Math.floor(bonusTotalMin / 60);
+  const bonusM = bonusTotalMin % 60;
+  document.getElementById('modal-bonus-time').innerText = `${bonusH}시간 ${bonusM}분`;
   document.getElementById('modal-used-time').innerText = calcUsedTime(pc.last_booted_at, pc.is_online);
 
   const days = ['일', '월', '화', '수', '목', '금', '토'];
