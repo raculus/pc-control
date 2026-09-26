@@ -1,6 +1,6 @@
 services:
   pc-control:
-    build: .
+    image: raculus/pc-control:latest
     container_name: pc-control
     restart: always
     network_mode: host
