@@ -171,9 +171,12 @@
       <label>Webhook URL</label>
       <input type="text" id="webhook-url" placeholder="https://discord.com/api/webhooks/...">
 
-      <div style="text-align: right; margin-top: 15px;">
-        <button onclick="saveWebhook()">저장하기</button>
-        <button class="btn-secondary" onclick="closeModal('webhook-modal')">취소</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
+        <button class="btn-secondary" onclick="testWebhook()">테스트</button>
+        <div>
+          <button onclick="saveWebhook()">저장하기</button>
+          <button class="btn-secondary" onclick="closeModal('webhook-modal')">취소</button>
+        </div>
       </div>
     </div>
   </div>

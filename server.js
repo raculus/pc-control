@@ -44,8 +44,8 @@ function sendDiscordWebhook(webhookUrl, pcName, ip, message) {
   if (!webhookUrl) return;
 
   const payload = JSON.stringify({
-    username: "PC 모니터링 알림", // 웹훅 메시지 프로필 이름
-    avatar_url: "https://github.com/raculus/pc-control-server/blob/main/public/icon.png?raw=true", // 웹훅 프로필 이미지 URL (전체 HTTP/HTTPS 경로)
+    username: "PC 모니터링 알림",
+    avatar_url: "https://github.com/raculus/pc-control-server/blob/main/public/icon.png?raw=true",
     content: `**[경고] PC SSH 접속 실패 알림**`,
     embeds: [{
       title: `PC: ${pcName} (${ip})`,
@@ -74,6 +74,52 @@ function sendDiscordWebhook(webhookUrl, pcName, ip, message) {
     console.error('[Discord URL Error]', err.message);
   }
 }
+
+// 웹훅 테스트 API
+app.post('/api/admin/webhook/test', checkAuth, (req, res) => {
+  const { discord_webhook_url } = req.body;
+  
+  if (!discord_webhook_url) {
+    return res.status(400).json({ success: false, message: '웹훅 URL을 입력해주세요.' });
+  }
+
+  try {
+    const payload = JSON.stringify({
+      username: "PC 모니터링 알림",
+      avatar_url: "https://github.com/raculus/pc-control-server/blob/main/public/icon.png?raw=true",
+      content: `✅ **디스코드 웹훅 연동 성공**`,
+      embeds: [{
+        title: `연동 성공`,
+        description: `디스코드 웹훅이 성공적으로 연동되었습니다.`,
+        color: 3066993, // Green
+        timestamp: new Date().toISOString()
+      }]
+    });
+
+    const url = new URL(discord_webhook_url);
+    const reqDiscord = https.request({
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    });
+
+    reqDiscord.on('error', (e) => {
+      console.error('[Discord Webhook Test Error]', e.message);
+      res.status(500).json({ success: false, message: '웹훅 전송 중 오류 발생: ' + e.message });
+    });
+
+    reqDiscord.write(payload);
+    reqDiscord.end();
+
+    res.json({ success: true, message: '테스트 메시지가 전송되었습니다.' });
+  } catch (err) {
+    res.status(400).json({ success: false, message: '올바르지 않은 Webhook URL 형식입니다.' });
+  }
+});
 
 // SSH Port(22) 오픈 여부 확인 헬퍼 함수
 function checkSshPort(ip, timeout = 3000) {

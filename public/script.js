@@ -322,6 +322,28 @@ async function saveWebhook() {
   }
 }
 
+async function testWebhook() {
+  const discord_webhook_url = document.getElementById('webhook-url').value;
+
+  if (!discord_webhook_url) {
+    return alert('테스트할 웹훅 URL을 입력하세요.');
+  }
+
+  const res = await fetch('/api/admin/webhook/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ discord_webhook_url })
+  });
+
+  const data = await res.json();
+
+  if (res.ok) {
+    alert(data.message || '테스트 메시지를 전송했습니다.');
+  } else {
+    alert(data.message || '테스트 전송 실패');
+  }
+}
+
 function closeModal(id) {
   document.getElementById(id).style.display = 'none';
 }
