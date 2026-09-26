@@ -13,6 +13,10 @@ RUN npm install
 
 COPY . .
 
-EXPOSE 3000
+# 기본 포트 환경변수 설정 (docker-compose 등에서 지정 안 할 경우 3000 사용)
+ENV PORT=3000
+
+# 컨테이너 기본 안내 포트
+EXPOSE ${PORT}
 
 CMD ["node", "server.js"]
