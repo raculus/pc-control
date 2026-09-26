@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  pc-control:
+    build: .
+    container_name: pc-control
+    restart: always
+    network_mode: host
+    volumes:
+      - ./pc_control.db:/app/pc_control.db

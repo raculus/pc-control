@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>통합 PC 시간 관리자</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h2>PC 네트워크 관제 센터</h2>
+    <div id="header-actions" style="display:none;">
+      <button onclick="openAddPcModal()">+ PC 추가</button>
+      <button class="btn-secondary" onclick="logout()">로그아웃</button>
+    </div>
+  </header>
+
+  <!-- 로그인 화면 -->
+  <div id="login-section" class="card">
+    <h3>관리자 로그인</h3>
+    <input type="password" id="password" placeholder="비밀번호 입력">
+    <div style="margin: 10px 0;">
+      <input type="checkbox" id="remember-me">
+      <label for="remember-me">비밀번호 기억하기</label>
+    </div>
+    <button style="width: 100%;" onclick="login()">로그인</button>
+  </div>
+
+  <!-- 메인 대시보드 (부모 화면) -->
+  <div id="dashboard" style="display:none;">
+    <div id="pc-grid" class="pc-grid"></div>
+  </div>
+
+  <!-- [자식 화면 모달] PC 제어 및 설정 -->
+  <div id="detail-modal" class="modal">
+    <div class="modal-content">
+      <h3 id="modal-pc-name">PC 제어</h3>
+      <p id="modal-pc-info" class="pc-info"></p>
+      
+      <div class="card">
+        <h4>현재 남은 시간</h4>
+        <div style="font-size: 1.6rem; font-weight: bold; text-align: center; color: var(--primary-color); margin: 10px 0;" id="modal-remaining-time">0시간 0분</div>
+        
+        <div class="time-control-group">
+          <div class="control-row">
+            <span class="control-label increase">증가</span>
+            <div class="btn-group">
+              <button onclick="adjustTime(60)">1시간</button>
+              <button onclick="adjustTime(30)">30분</button>
+              <button onclick="adjustTime(10)">10분</button>
+            </div>
+          </div>
+          <div class="control-row">
+            <span class="control-label decrease">차감</span>
+            <div class="btn-group">
+              <button class="btn-secondary" onclick="adjustTime(-60)">1시간</button>
+              <button class="btn-secondary" onclick="adjustTime(-30)">30분</button>
+              <button class="btn-secondary" onclick="adjustTime(-10)">10분</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h4>요일별 기본 제공 시간</h4>
+        <div class="bulk-box">
+          <span>일괄 입력:</span>
+          <input type="number" id="bulk-hours" min="0" value="0"> 시간
+          <input type="number" id="bulk-minutes" min="0" max="59" value="0"> 분
+          <button onclick="updateScheduleBulk()">적용</button>
+        </div>
+        <div id="schedule-list"></div>
+      </div>
+
+      <div style="display: flex; gap: 8px; justify-content: space-between; margin-top: 15px;">
+        <button class="btn-danger" onclick="shutdownNow()">즉시 SSH 종료</button>
+        <div>
+          <button class="btn-danger" onclick="deletePc()">등록 삭제</button>
+          <button class="btn-secondary" onclick="closeModal('detail-modal')">닫기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- [추가 모달] LAN 탐색 및 PC 추가 -->
+  <div id="add-modal" class="modal">
+    <div class="modal-content">
+      <h3>새 PC 등록</h3>
+      <label>LAN 탐색 디바이스 선택</label>
+      <select id="lan-devices" onchange="selectLanDevice()">
+        <option value="">-- ARP 탐색 장치 선택 --</option>
+      </select>
+      
+      <label>PC 이름 (예: 동생 컴퓨터)</label>
+      <input type="text" id="add-name" placeholder="PC 이름을 입력하세요">
+      
+      <label>IP 주소</label>
+      <input type="text" id="add-ip" placeholder="192.168.x.x">
+      
+      <label>MAC 주소</label>
+      <input type="text" id="add-mac" placeholder="aa:bb:cc:dd:ee:ff">
+      
+      <label>SSH 사용자명</label>
+      <input type="text" id="add-ssh-user" value="administrator">
+      
+      <label>SSH 비밀번호 (자동 종료용)</label>
+      <input type="password" id="add-ssh-pass" placeholder="Windows/Linux 계정 비밀번호">
+
+      <div style="text-align: right; margin-top: 15px;">
+        <button onclick="saveNewPc()">등록하기</button>
+        <button class="btn-secondary" onclick="closeModal('add-modal')">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentPcId = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const savedPw = localStorage.getItem('admin_password');
+      if (savedPw) {
+        document.getElementById('password').value = savedPw;
+        document.getElementById('remember-me').checked = true;
+        login(savedPw);
+      }
+    });
+
+    async function login(pwOverride) {
+      const password = pwOverride || document.getElementById('password').value;
+      const remember = document.getElementById('remember-me').checked;
+
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+
+      if (res.ok) {
+        if (remember) localStorage.setItem('admin_password', password);
+        document.getElementById('login-section').style.display = 'none';
+        document.getElementById('dashboard').style.display = 'block';
+        document.getElementById('header-actions').style.display = 'block';
+        loadPcs();
+        setInterval(loadPcs, 10000); // 10초마다 상태 동기화
+      } else {
+        alert('비밀번호 불일치');
+        localStorage.removeItem('admin_password');
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('admin_password');
+      location.reload();
+    }
+
+    // 부모 화면: PC 목록 카드 갱신
+    async function loadPcs() {
+      const res = await fetch('/api/pcs');
+      if (!res.ok) return;
+      const pcs = await res.json();
+
+      const grid = document.getElementById('pc-grid');
+      grid.innerHTML = '';
+
+      pcs.forEach(pc => {
+        const totalMinutes = Math.floor(pc.remaining_seconds / 60);
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        const statusText = pc.is_online ? '켜짐' : '꺼짐';
+
+        const card = document.createElement('div');
+        card.className = `pc-card ${pc.is_online ? 'online' : 'offline'}`;
+        card.onclick = () => openDetailModal(pc.id);
+        card.innerHTML = `
+          <div class="pc-name"><span class="status-badge"></span>${pc.name}</div>
+          <div class="pc-info">상태: ${statusText} | IP: ${pc.ip}</div>
+          <div class="pc-time">${hours}시간 ${minutes}분</div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    // 자식 화면: 특정 PC 클릭 시 상세 모달 오픈
+    async function openDetailModal(pcId) {
+      currentPcId = pcId;
+      const res = await fetch(`/api/pcs/${pcId}`);
+      if (!res.ok) return;
+
+      const data = await res.json();
+      const pc = data.pc;
+
+      document.getElementById('modal-pc-name').innerText = pc.name;
+      document.getElementById('modal-pc-info').innerText = `IP: ${pc.ip} | MAC: ${pc.mac}`;
+
+      const totalMinutes = Math.floor(pc.remaining_seconds / 60);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      document.getElementById('modal-remaining-time').innerText = `${hours}시간 ${minutes}분`;
+
+      const days = ['일', '월', '화', '수', '목', '금', '토'];
+      const scheduleContainer = document.getElementById('schedule-list');
+      scheduleContainer.innerHTML = '';
+
+      data.schedules.forEach(item => {
+        const itemHours = Math.floor(item.default_minutes / 60);
+        const itemMinutes = item.default_minutes % 60;
+
+        const div = document.createElement('div');
+        div.className = 'schedule-row';
+        div.innerHTML = `
+          <span><strong>${days[item.day_of_week]}요일</strong></span>
+          <div>
+            <input type="number" value="${itemHours}" id="day-h-${item.day_of_week}" min="0"> 시간
+            <input type="number" value="${itemMinutes}" id="day-m-${item.day_of_week}" min="0" max="59"> 분
+            <button onclick="updateSchedule(${item.day_of_week})">저장</button>
+          </div>
+        `;
+        scheduleContainer.appendChild(div);
+      });
+
+      document.getElementById('detail-modal').style.display = 'flex';
+    }
+
+    async function adjustTime(minutes) {
+      await fetch(`/api/pcs/${currentPcId}/adjust-time`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ minutes })
+      });
+      openDetailModal(currentPcId);
+      loadPcs();
+    }
+
+    async function updateSchedule(day_of_week) {
+      const hours = parseInt(document.getElementById(`day-h-${day_of_week}`).value) || 0;
+      const minutes = parseInt(document.getElementById(`day-m-${day_of_week}`).value) || 0;
+
+      await fetch(`/api/pcs/${currentPcId}/update-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day_of_week, default_minutes: (hours * 60) + minutes })
+      });
+      alert('저장되었습니다.');
+    }
+
+    async function updateScheduleBulk() {
+      const hours = parseInt(document.getElementById('bulk-hours').value) || 0;
+      const minutes = parseInt(document.getElementById('bulk-minutes').value) || 0;
+
+      await fetch(`/api/pcs/${currentPcId}/update-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day_of_week: 'bulk', default_minutes: (hours * 60) + minutes })
+      });
+      openDetailModal(currentPcId);
+    }
+
+    async function shutdownNow() {
+      if (!confirm('이 PC를 지금 즉시 원격 종료하시겠습니까?')) return;
+      const res = await fetch(`/api/pcs/${currentPcId}/shutdown-now`, { method: 'POST' });
+      const data = await res.json();
+      alert(data.message || '종료 요청 전달됨');
+    }
+
+    async function deletePc() {
+      if (!confirm('이 PC를 관리 목록에서 삭제하시겠습니까?')) return;
+      await fetch(`/api/pcs/${currentPcId}`, { method: 'DELETE' });
+      closeModal('detail-modal');
+      loadPcs();
+    }
+
+    // LAN 스캔 모달 처리
+    async function openAddPcModal() {
+      const res = await fetch('/api/lan/devices');
+      const devices = await res.json();
+      
+      const select = document.getElementById('lan-devices');
+      select.innerHTML = '<option value="">-- ARP 탐색 장치 선택 --</option>';
+      devices.forEach(dev => {
+        select.innerHTML += `<option value="${dev.ip}|${dev.mac}">IP: ${dev.ip} (MAC: ${dev.mac})</option>`;
+      });
+
+      document.getElementById('add-modal').style.display = 'flex';
+    }
+
+    function selectLanDevice() {
+      const val = document.getElementById('lan-devices').value;
+      if (!val) return;
+      const [ip, mac] = val.split('|');
+      document.getElementById('add-ip').value = ip;
+      document.getElementById('add-mac').value = mac;
+    }
+
+    async function saveNewPc() {
+      const name = document.getElementById('add-name').value;
+      const ip = document.getElementById('add-ip').value;
+      const mac = document.getElementById('add-mac').value;
+      const ssh_user = document.getElementById('add-ssh-user').value;
+      const ssh_password = document.getElementById('add-ssh-pass').value;
+
+      if (!name || !ip || !mac) return alert('이름, IP, MAC 주소는 필수입니다.');
+
+      const res = await fetch('/api/pcs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, ip, mac, ssh_user, ssh_password })
+      });
+
+      if (res.ok) {
+        closeModal('add-modal');
+        loadPcs();
+      } else {
+        alert('등록 실패');
+      }
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).style.display = 'none';
+    }
+  </script>
+</body>
+</html>
