@@ -89,7 +89,7 @@ header {
   background: #fff;
   border-radius: 12px;
   overflow: hidden;
-  padding: 0;
+  padding: 16px;
   width: 90%;
   max-width: 500px;
   max-height: 90vh;
