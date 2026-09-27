@@ -121,6 +121,42 @@ app.post('/api/admin/webhook/test', checkAuth, (req, res) => {
   }
 });
 
+
+// MAC 주소 기반 남은 시간 조회
+app.get('/api/client/status-by-mac', (req, res) => {
+  const mac = req.query.mac;
+  if (!mac) return res.status(400).json({ error: 'MAC 주소가 필요합니다.' });
+
+  try {
+    const data = db.read();
+    const cleanMac = mac.trim().toLowerCase();
+    const pc = data.pcs.find(p => p.mac.trim().toLowerCase() === cleanMac);
+
+    if (!pc) {
+      return res.status(404).json({ error: '등록되지 않은 PC입니다.' });
+    }
+
+    const totalRemaining = pc.remaining_seconds + (pc.bonus_seconds || 0);
+    const totalMinutes = Math.floor(totalRemaining / 60);
+
+    res.json({
+      id: pc.id,
+      name: pc.name,
+      // remaining_seconds: pc.remaining_seconds,
+      remaining_seconds: totalRemaining,
+      bonus_seconds: pc.bonus_seconds || 0,
+      total_remaining_seconds: totalRemaining,
+      hours: Math.floor(totalMinutes / 60),
+      minutes: totalMinutes % 60,
+      should_shutdown: totalRemaining <= 0,
+      last_booted_at: pc.last_booted_at
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'DB 조회 실패' });
+  }
+});
+
+
 // SSH Port(22) 오픈 여부 확인 헬퍼 함수
 function checkSshPort(ip, timeout = 3000) {
   return new Promise((resolve) => {
