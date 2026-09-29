@@ -4,8 +4,9 @@
 라즈베리파이에서 대상 컴퓨터로 ping 하여 사용중 여부 파악 및 시간 소진 후 ssh로 종료
 
 ## 클라이언트
-https://apps.microsoft.com/store/detail/9NCF9P81VDZ6?cid=DevShareMCLPCS
-
+<a href="https://get.microsoft.com/installer/download/9ncf9p81vdz6?referrer=appbadge" target="_self" >
+	<img src="https://get.microsoft.com/images/ko%20dark.svg" width="200"/>
+</a><br>
 https://github.com/raculus/pc-control-client
 
 ## 도커 이미지
